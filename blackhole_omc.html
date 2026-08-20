@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Schwarzschild — Relativistic Raymarching</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background: #05070b;
+    overscroll-behavior: none;
+  }
+
+  canvas#c {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    cursor: grab;
+  }
+  canvas#c.grabbing { cursor: grabbing; }
+
+  /* ---- HUD (minimal, scientific-instrument) ---- */
+  .hud, .legend {
+    position: fixed;
+    pointer-events: none;
+    color: rgba(206, 214, 226, 0.58);
+    font-family: 'Cascadia Code', 'SF Mono', 'JetBrains Mono', ui-monospace, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    z-index: 3;
+    opacity: 0;
+    animation: fadeUp 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+    user-select: none;
+  }
+  .d1 { animation-delay: 0.15s; }
+  .d2 { animation-delay: 0.40s; }
+  .d3 { animation-delay: 0.70s; }
+  .d4 { animation-delay: 0.95s; }
+  .d5 { animation-delay: 1.15s; }
+
+  .tl { top: 24px; left: 26px; line-height: 1.7; }
+  .tl .title {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.32em;
+    color: rgba(226, 232, 242, 0.82);
+    text-transform: uppercase;
+  }
+  .tl .title .dot { color: rgba(150, 205, 240, 0.95); }
+  .tl .sub {
+    font-size: 10px;
+    letter-spacing: 0.20em;
+    color: rgba(150, 162, 180, 0.52);
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+  .tl .rule {
+    width: 42px; height: 1px; margin-top: 9px;
+    background: linear-gradient(90deg, rgba(150, 205, 240, 0.7), transparent);
+  }
+
+  .tr { top: 26px; right: 28px; text-align: right; line-height: 1.7; }
+  .tr .a { font-size: 10px; letter-spacing: 0.24em; color: rgba(206, 214, 226, 0.5); text-transform: uppercase; }
+  .tr .b { font-size: 9px; letter-spacing: 0.18em; color: rgba(150, 162, 180, 0.42); text-transform: uppercase; margin-top: 2px; }
+
+  .bl { bottom: 26px; left: 26px; line-height: 1.6; }
+  .bl .key { color: rgba(226, 232, 242, 0.72); letter-spacing: 0.14em; }
+  .bl .sep { color: rgba(150, 162, 180, 0.35); margin: 0 7px; }
+
+  .br { bottom: 26px; right: 28px; font-size: 10px; letter-spacing: 0.16em; color: rgba(150, 162, 180, 0.5); text-transform: uppercase; }
+  .br b { color: rgba(206, 214, 226, 0.72); font-weight: 600; }
+
+  /* ---- Doppler legend ---- */
+  .legend {
+    left: 50%; bottom: 26px; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .legend .bar {
+    width: 190px; height: 5px; border-radius: 3px;
+    background: linear-gradient(90deg,
+      rgba(120, 28, 8, 0.20),
+      rgba(255, 112, 34, 0.72),
+      rgba(255, 244, 232, 0.92),
+      rgba(150, 190, 255, 0.90));
+    box-shadow: 0 0 10px rgba(255, 150, 70, 0.12);
+  }
+  .legend .cap { width: 190px; display: flex; justify-content: space-between; font-size: 9px; letter-spacing: 0.16em; }
+  .legend .cap .cool { color: rgba(150, 162, 180, 0.42); }
+  .legend .cap .hot  { color: rgba(180, 210, 245, 0.62); }
+  .legend .lab { font-size: 9px; letter-spacing: 0.22em; color: rgba(150, 162, 180, 0.42); text-transform: uppercase; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  #fail {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    color: rgba(206, 214, 226, 0.7); font-family: ui-monospace, monospace; letter-spacing: 0.1em; z-index: 9;
+  }
+</style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div class="hud tl d1">
+    <div class="title">Schwarzschild <span class="dot">&#9679;</span></div>
+    <div class="sub">relativistic raymarching &middot; real-time</div>
+    <div class="rule"></div>
+  </div>
+
+  <div class="hud tr d2">
+    <div class="a">Geodesic Ray Marcher</div>
+    <div class="b">h&sup2;&nbsp;conserved deflection</div>
+  </div>
+
+  <div class="hud bl d5">
+    <span class="key">DRAG</span> rotate
+    <span class="sep">&middot;</span>
+    <span class="key">SCROLL</span> zoom
+    <span class="sep">&middot;</span>
+    <span class="key">RIGHT / MIDDLE</span> pan
+  </div>
+
+  <div class="legend d4">
+    <div class="lab">Doppler beaming</div>
+    <div class="bar"></div>
+    <div class="cap"><span class="cool">RECEDING</span><span class="hot">APPROACHING</span></div>
+  </div>
+
+  <div class="hud br d3" id="tele">R&nbsp;18.0 &middot; &mdash; &middot; &mdash; FPS</div>
+
+  <div id="fail">This scene requires WebGL. Please enable it in your browser and reload.</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var canvas = document.getElementById('c');
+  var failEl = document.getElementById('fail');
+  var tele = document.getElementById('tele');
+
+  var gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' })
+        || canvas.getContext('experimental-webgl', { antialias: false, alpha: false, preserveDrawingBuffer: true });
+
+  if (!gl) { failEl.style.display = 'flex'; return; }
+
+  /* ---------- shaders ---------- */
+  var VS = "\n" +
+    "attribute vec2 a_pos;\n" +
+    "void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }\n";
+
+  var FS = "\n" +
+    "precision highp float;\n" +
+    "uniform vec2  u_res;\n" +
+    "uniform float u_time;\n" +
+    "uniform vec3  u_camPos;\n" +
+    "uniform vec3  u_camFwd;\n" +
+    "uniform vec3  u_camRight;\n" +
+    "uniform vec3  u_camUp;\n" +
+    "\n" +
+    "#define MAXSTEPS 120\n" +
+    "#define FL 1.45\n" +
+    "#define ESCAPE 46.0\n" +
+    "#define DISK_IN 3.0\n" +
+    "#define DISK_OUT 10.5\n" +
+    "#define DISK_T 0.5\n" +
+    "#define DISK_BRIGHT 1.05\n" +
+    "\n" +
+    "float hash13(vec3 p){ p = fract(p * 0.1031); p += dot(p, p.zyx + 33.33); return fract((p.x + p.y) * p.z); }\n" +
+    "vec3 hash33(vec3 p){ p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx) * p.zyx); }\n" +
+    "\n" +
+    "float noise3(vec3 x){\n" +
+    "  vec3 i = floor(x); vec3 f = fract(x); vec3 u = f * f * (3.0 - 2.0 * f);\n" +
+    "  float n000 = hash13(i);\n" +
+    "  float n100 = hash13(i + vec3(1.0,0.0,0.0));\n" +
+    "  float n010 = hash13(i + vec3(0.0,1.0,0.0));\n" +
+    "  float n110 = hash13(i + vec3(1.0,1.0,0.0));\n" +
+    "  float n001 = hash13(i + vec3(0.0,0.0,1.0));\n" +
+    "  float n101 = hash13(i + vec3(1.0,0.0,1.0));\n" +
+    "  float n011 = hash13(i + vec3(0.0,1.0,1.0));\n" +
+    "  float n111 = hash13(i + vec3(1.0,1.0,1.0));\n" +
+    "  return mix(\n" +
+    "    mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),\n" +
+    "    mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);\n" +
+    "}\n" +
+    "float fbm3(vec3 p){ float s = 0.0; float a = 0.5; for(int n = 0; n < 4; n++){ s += a * noise3(p); p = p * 2.02 + vec3(11.3); a *= 0.5; } return s; }\n" +
+    "\n" +
+    "vec3 diskGrad(float rn){\n" +
+    "  rn = clamp(rn, 0.0, 1.0);\n" +
+    "  vec3 hot  = vec3(1.00, 0.97, 0.88);\n" +
+    "  vec3 warm = vec3(1.00, 0.48, 0.12);\n" +
+    "  vec3 cool = vec3(0.50, 0.08, 0.02);\n" +
+    "  vec3 c = mix(hot, warm, smoothstep(0.02, 0.30, rn));\n" +
+    "  c = mix(c, cool, smoothstep(0.28, 0.85, rn));\n" +
+    "  return c;\n" +
+    "}\n" +
+    "\n" +
+    "vec3 starLayer(vec3 dir, float N, float density, float radius){\n" +
+    "  vec3 p = dir * N; vec3 ip = floor(p); vec3 fp = fract(p) - 0.5;\n" +
+    "  float h = hash13(ip);\n" +
+    "  if (h > density) return vec3(0.0);\n" +
+    "  vec3 r1 = hash33(ip);\n" +
+    "  vec3 sp = (r1 - 0.5) * 0.85;\n" +
+    "  float dd = length(fp - sp);\n" +
+    "  float x = dd / max(radius, 0.001);\n" +
+    "  float core = exp(-x * x * 6.0);\n" +
+    "  float halo = exp(-x * x * 1.4);\n" +
+    "  float b = 0.4 + 0.6 * h;\n" +
+    "  float tw = 0.7 + 0.3 * sin(u_time * 2.0 + h * 60.0);\n" +
+    "  vec3 tint = mix(vec3(0.75, 0.85, 1.0), vec3(1.0, 0.85, 0.7), hash13(ip + 3.3));\n" +
+    "  return tint * (core * 1.3 + halo * 0.22) * b * tw;\n" +
+    "}\n" +
+    "\n" +
+    "vec3 starfield(vec3 dir){\n" +
+    "  dir = normalize(dir);\n" +
+    "  vec3 col = vec3(0.0);\n" +
+    "  float band = fbm3(dir * 3.0 + 10.0);\n" +
+    "  band = smoothstep(0.42, 0.85, band);\n" +
+    "  float v = dir.y * 0.5 + 0.5;\n" +
+    "  vec3 neb = mix(vec3(0.10, 0.14, 0.20), vec3(0.17, 0.11, 0.10), v) * band * 0.55;\n" +
+    "  col += neb;\n" +
+    "  col += starLayer(dir, 80.0, 0.55, 0.24) * 0.65;\n" +
+    "  col += starLayer(dir, 45.0, 0.34, 0.15) * 0.95;\n" +
+    "  col += starLayer(dir, 22.0, 0.12, 0.10) * 1.6;\n" +
+    "  return col;\n" +
+    "}\n" +
+    "\n" +
+    "vec3 diskEmit(vec3 dpt, float r, vec3 camDir){\n" +
+    "  float rn = (r - DISK_IN) / (DISK_OUT - DISK_IN);\n" +
+    "  float inner = smoothstep(DISK_IN, DISK_IN * 1.06, r);\n" +
+    "  float outer = 1.0 - smoothstep(DISK_OUT * 0.72, DISK_OUT, r);\n" +
+    "  float env = inner * outer;\n" +
+    "  float radial = pow(DISK_IN / r, 1.3);\n" +
+    "  float v = min(1.0 / sqrt(r), 0.9);\n" +
+    "  float gamma = 1.0 / sqrt(max(1.0 - v * v, 0.0001));\n" +
+    "  vec3 vdir = normalize(cross(dpt, vec3(0.0, 1.0, 0.0)));\n" +
+    "  vec3 photonDir = -normalize(camDir);\n" +
+    "  float dotv = dot(vdir, photonDir);\n" +
+    "  float delta = 1.0 / (gamma * clamp(1.0 - v * dotv, 0.05, 1.0));\n" +
+    "  delta = clamp(delta, 0.15, 4.0);\n" +
+    "  float rnShift = clamp(rn + (1.0 - delta) * 0.45, 0.0, 1.0);\n" +
+    "  vec3 c = diskGrad(rnShift);\n" +
+    "  float ang = atan(dpt.z, dpt.x);\n" +
+    "  float phase = ang + 1.7 * log(r) - u_time * (0.28 / sqrt(r));\n" +
+    "  vec2 q = vec2(cos(phase), sin(phase)) * r;\n" +
+    "  float n1 = fbm3(vec3(q * 0.55, u_time * 0.05));\n" +
+    "  float n2 = fbm3(vec3(q * 1.60 + 4.7, u_time * 0.03));\n" +
+    "  float turb = (0.55 + 0.45 * n1) * (0.65 + 0.35 * n2);\n" +
+    "  float arm = 0.75 + 0.35 * sin(ang * 3.0 + log(r) * 6.0 - u_time * 0.2);\n" +
+    "  float inten = env * radial * turb * arm;\n" +
+    "  float beam = delta * delta;\n" +
+    "  return c * inten * beam * DISK_BRIGHT;\n" +
+    "}\n" +
+    "\n" +
+    "void main(){\n" +
+    "  vec2 p = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;\n" +
+    "  vec3 rd  = normalize(u_camFwd + p.x * u_camRight * FL + p.y * u_camUp * FL);\n" +
+    "  vec3 pos = u_camPos;\n" +
+    "  vec3 vel = rd;\n" +
+    "  vec3 hv  = cross(pos, vel);\n" +
+    "  float h2 = dot(hv, hv);\n" +
+    "\n" +
+    "  vec3 col = vec3(0.0);\n" +
+    "  float trans = 1.0;\n" +
+    "  float dt;\n" +
+    "  float escaped = 0.0;\n" +
+    "\n" +
+    "  for (int i = 0; i < MAXSTEPS; i++){\n" +
+    "    float r2 = dot(pos, pos);\n" +
+    "    if (r2 < 1.0) break;                 /* crossed the horizon */\n" +
+    "    if (r2 > ESCAPE * ESCAPE) { escaped = 1.0; break; }\n" +
+    "    float rs = sqrt(r2);\n" +
+    "    dt = clamp(0.016 * rs + 0.02, 0.045, 1.3);\n" +
+    "    vec3 acc = -1.5 * h2 * pos / (r2 * r2 * rs);   /* Schwarzschild deflection  ~ r^-4 */\n" +
+    "    vel = normalize(vel + acc * dt);\n" +
+    "    vec3 p0 = pos;\n" +
+    "    pos = pos + vel * dt;\n" +
+    "    /* accretion-disk plane crossing (y = 0) */\n" +
+    "    float s0 = p0.y; float s1 = pos.y;\n" +
+    "    if (s0 * s1 < 0.0) {\n" +
+    "      float t = s0 / (s0 - s1);\n" +
+    "      vec3 dpt = p0 + (pos - p0) * t;\n" +
+    "      float r = length(dpt.xz);\n" +
+    "      if (r > DISK_IN && r < DISK_OUT) {\n" +
+    "        col += trans * diskEmit(dpt, r, pos - p0);\n" +
+    "        trans *= DISK_T;\n" +
+    "        if (trans < 0.02) break;\n" +
+    "      }\n" +
+    "    }\n" +
+    "  }\n" +
+    "\n" +
+    "  if (escaped == 1.0) { col += trans * starfield(normalize(vel)); }\n" +
+    "\n" +
+    "  col = 1.0 - exp(-col * 3.2);         /* exposure / filmic compress */\n" +
+    "  col = pow(col, vec3(1.0 / 2.2));       /* gamma */\n" +
+    "  vec2 q = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;\n" +
+    "  float vig = smoothstep(1.15, 0.35, length(q * vec2(u_res.x / u_res.y, 1.0)));\n" +
+    "  col *= 0.55 + 0.45 * vig;\n" +
+    "  gl_FragColor = vec4(col, 1.0);\n" +
+    "}\n";
+
+  function mkShader(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error('Shader compile error:\n' + gl.getShaderInfoLog(s));
+      return null;
+    }
+    return s;
+  }
+  function mkProgram(vs, fs) {
+    var p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.bindAttribLocation(p, 0, 'a_pos');
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      console.error('Program link error:\n' + gl.getProgramInfoLog(p));
+      return null;
+    }
+    return p;
+  }
+
+  var vs = mkShader(gl.VERTEX_SHADER, VS);
+  var fs = mkShader(gl.FRAGMENT_SHADER, FS);
+  if (!vs || !fs) { failEl.style.display = 'flex'; return; }
+  var program = mkProgram(vs, fs);
+  if (!program) { failEl.style.display = 'flex'; return; }
+  gl.useProgram(program);
+
+  /* fullscreen triangle */
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1,  3, -1,  -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  var u_res     = gl.getUniformLocation(program, 'u_res');
+  var u_time    = gl.getUniformLocation(program, 'u_time');
+  var u_camPos  = gl.getUniformLocation(program, 'u_camPos');
+  var u_camFwd  = gl.getUniformLocation(program, 'u_camFwd');
+  var u_camRight= gl.getUniformLocation(program, 'u_camRight');
+  var u_camUp   = gl.getUniformLocation(program, 'u_camUp');
+
+  /* ---------- camera state ---------- */
+  var yaw = 0.35, pitch = 0.38, radius = 18.0;
+  var yawT = yaw, pitchT = pitch, radiusT = radius;
+  var target  = { x: 0, y: 0, z: 0 };
+  var targetT = { x: 0, y: 0, z: 0 };
+  var curRight = [1, 0, 0], curUp = [0, 1, 0];
+
+  var dragging = false, button = -1, lastX = 0, lastY = 0, lastInteract = performance.now();
+  function mark() { lastInteract = performance.now(); }
+
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  canvas.addEventListener('mousedown', function (e) {
+    dragging = true; button = e.button; lastX = e.clientX; lastY = e.clientY;
+    canvas.classList.add('grabbing'); mark();
+  });
+  window.addEventListener('mouseup', function () {
+    dragging = false; button = -1;
+    canvas.classList.remove('grabbing');
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    var dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY; mark();
+    if (button === 0) {
+      yawT   += dx * 0.005;
+      pitchT += dy * 0.005;
+      var lim = 1.45;
+      if (pitchT >  lim) pitchT =  lim;
+      if (pitchT < -lim) pitchT = -lim;
+    } else {
+      var S = 0.00145 * radius;
+      targetT.x += (-dx * curRight[0] + dy * curUp[0]) * S;
+      targetT.y += (-dx * curRight[1] + dy * curUp[1]) * S;
+      targetT.z += (-dx * curRight[2] + dy * curUp[2]) * S;
+    }
+  });
+  canvas.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    radiusT *= Math.exp(e.deltaY * 0.0012);
+    if (radiusT < 5.0)  radiusT = 5.0;
+    if (radiusT > 70.0) radiusT = 70.0;
+    mark();
+  }, { passive: false });
+
+  /* ---------- resize (cap internal resolution for perf) ---------- */
+  var dprCap = 1.5, maxW = 1920;
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, dprCap);
+    var w = Math.floor(canvas.clientWidth * dpr);
+    var h = Math.floor(canvas.clientHeight * dpr);
+    if (w > maxW) { var s = maxW / w; w = maxW; h = Math.floor(h * s); }
+    if (w < 1) w = 1; if (h < 1) h = 1;
+    canvas.width = w; canvas.height = h;
+    gl.viewport(0, 0, w, h);
+  }
+  window.addEventListener('resize', resize);
+
+  /* ---------- render loop ---------- */
+  var start = performance.now(), lastT = start;
+  var fps = 60, lastHud = 0;
+
+  function frame(now) {
+    var dt = (now - lastT) / 1000; lastT = now;
+    if (dt > 0.05) dt = 0.05;
+
+    /* damped interpolation toward targets */
+    var k = 1 - Math.exp(-9 * dt);
+    yaw   += (yawT   - yaw)   * k;
+    pitch += (pitchT - pitch) * k;
+    radius+= (radiusT- radius)* k;
+    target.x       += (targetT.x - target.x) * k;
+    target.y       += (targetT.y - target.y) * k;
+    target.z       += (targetT.z - target.z) * k;
+
+    /* gentle idle drift so the shot stays cinematic when untouched */
+    if (!dragging && (now - lastInteract) > 3000) yawT += 0.03 * dt;
+
+    /* orthonormal view basis (direct unit vectors, no cross/normalize) */
+    var cy = Math.cos(yaw),   sy = Math.sin(yaw);
+    var cp = Math.cos(pitch), sp = Math.sin(pitch);
+    var odx = cp * sy, ody = sp, odz = cp * cy;
+    var camX = target.x + odx * radius;
+    var camY = target.y + ody * radius;
+    var camZ = target.z + odz * radius;
+    var fwdX = -odx, fwdY = -ody, fwdZ = -odz;
+    var rightX = cy, rightY = 0, rightZ = -sy;
+    var upX = -sy * sp, upY = cp, upZ = -cy * sp;
+    curRight = [rightX, rightY, rightZ];
+    curUp    = [upX, upY, upZ];
+
+    gl.uniform2f(u_res, canvas.width, canvas.height);
+    gl.uniform1f(u_time, (now - start) / 1000);
+    gl.uniform3f(u_camPos,   camX, camY, camZ);
+    gl.uniform3f(u_camFwd,   fwdX, fwdY, fwdZ);
+    gl.uniform3f(u_camRight, rightX, rightY, rightZ);
+    gl.uniform3f(u_camUp,    upX, upY, upZ);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    if (dt > 0) fps = fps * 0.92 + (1 / dt) * 0.08;
+    if (now - lastHud > 250) {
+      lastHud = now;
+      tele.innerHTML = 'R <b>' + radius.toFixed(1) + '</b> &middot; <b>' + canvas.width + '&times;' + canvas.height + '</b> &middot; <b>' + Math.round(fps) + ' FPS</b>';
+    }
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  mark();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
